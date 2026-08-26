@@ -1,0 +1,12 @@
+# build artefacts
+*.app/
+*.dmg
+AppIcon.icns
+AppIcon.iconset/
+
+# macOS noise
+.DS_Store
+._*
+
+# vendor utility used only as a reference, not ours to redistribute
+Elgin Utility para L42 Pro/
