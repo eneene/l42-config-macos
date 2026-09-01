@@ -269,14 +269,15 @@ struct PrinterConfig {
     var columnOffsetDots = 0       // -90 ... 90   (left position, ^LS)
     var rowOffsetDots = 0          // -90 ... 90   (label top,     ^LT)
     var darkness = 4               // ~SD   (1..30, permanente)
-    /// The speed the printer REPORTS in ^HH. The ^PR command uses a
-    /// different scale: measured on an L42PRO FULL, ^PR2 -> reports 04,
-    /// ^PR3 -> 05, ^PR4 -> 06, and ^PR5 is rejected outright (falls back to
-    /// 04). So the command value is the reported value minus 2, and the
-    /// usable reported range is 4..6.
-    var speedIPS = 4
-    static let SPEED_OFFSET = 2
-    static let SPEED_REPORTED = [4, 5, 6]
+    /// Real print speed in inches per second. ^PR takes this value directly
+    /// (PPLZ manual), and the printer's spec caps it at 102 mm/s = 4 ips —
+    /// ^PR5+ is rejected and ^PR1 clamps to 2.
+    /// The catch is on the way IN: the ^HH dump reports this field TWO
+    /// higher than the truth (it prints "04 IPS" when the printer is at 2),
+    /// so parsing has to subtract the offset.
+    var speedIPS = 2
+    static let SPEED_DUMP_OFFSET = 2
+    static let SPEEDS = [2, 3, 4]
     var reprintAfterError: YesNo = .yes   // ^JZ
     var mirror: YesNo = .no               // ^PM
     var invert: YesNo = .no               // ^PO  (I = 180°)
@@ -353,7 +354,10 @@ struct PrinterConfig {
         if let v = num("LABEL TOP")    { c.rowOffsetDots = v }
         if let v = num("LEFT POSITION"){ c.columnOffsetDots = v }
         if let v = num("DARKNESS")     { c.darkness = v }
-        if let v = num("PRINT SPEED")  { c.speedIPS = v }
+        // The dump overstates speed by 2; correct it to real ips.
+        if let v = num("PRINT SPEED") {
+            c.speedIPS = max(2, min(4, v - PrinterConfig.SPEED_DUMP_OFFSET))
+        }
         func action(_ s: String?) -> StartAction {
             guard let s else { return .none }
             if s.contains("CALIBRATION") { return .calibrate }
@@ -394,9 +398,7 @@ struct PrinterConfig {
         zpl += "^ML\(maxCalibMM * Self.dotsPerMM)"
         zpl += "^LT\(rowOffsetDots)"
         zpl += "^LS\(columnOffsetDots)"
-        // Send on the command's scale, not the reported one.
-        let reported = max(4, min(6, speedIPS))
-        zpl += "^PR\(reported - Self.SPEED_OFFSET)"
+        zpl += "^PR\(max(2, min(4, speedIPS)))"
         zpl += "^MF\(powerUp.code),\(headClose.code)"
         zpl += "^JZ\(reprintAfterError.code)"
         zpl += "^PM\(mirror.code)"
@@ -654,7 +656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pop.widthAnchor.constraint(equalToConstant: 190).isActive = true
         }
         // Only the values this printer actually accepts.
-        speedPop.addItems(withTitles: PrinterConfig.SPEED_REPORTED.map(String.init))
+        speedPop.addItems(withTitles: PrinterConfig.SPEEDS.map(String.init))
         speedPop.widthAnchor.constraint(equalToConstant: 70).isActive = true
         for pop in [reprintPop, mirrorPop, invertPop] {
             pop.addItems(withTitles: YesNo.allCases.map { $0.label })
@@ -695,7 +697,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             line("OFFSET DE COLUNA:", colField, "-90 até 90 (ptos)"),
             line("OFFSET DE LINHA:", rowField, "-90 até 90 (ptos)"),
             line("ESCURECIMENTO:", darkField, "1 até 30 (~SD)"),
-            line("VELOCIDADE:", speedPop, "ips — enviado como ^PR(valor-2)"),
+            line("VELOCIDADE:", speedPop, "ips (máx. 4 = 102 mm/s)"),
             line("REIMPRIMIR APÓS ERRO:", reprintPop, "^JZ"),
             line("ESPELHAR IMAGEM:", mirrorPop, "^PM"),
             line("INVERTER 180°:", invertPop, "^PO"),
@@ -1021,8 +1023,8 @@ extension AppDelegate {
         c.columnOffsetDots = Int(colField.stringValue) ?? 0
         c.rowOffsetDots = Int(rowField.stringValue) ?? 0
         c.darkness = Int(darkField.stringValue) ?? c.darkness
-        c.speedIPS = PrinterConfig.SPEED_REPORTED[
-            max(0, min(PrinterConfig.SPEED_REPORTED.count - 1, speedPop.indexOfSelectedItem))]
+        c.speedIPS = PrinterConfig.SPEEDS[
+            max(0, min(PrinterConfig.SPEEDS.count - 1, speedPop.indexOfSelectedItem))]
         c.reprintAfterError = YesNo.allCases[reprintPop.indexOfSelectedItem]
         c.mirror = YesNo.allCases[mirrorPop.indexOfSelectedItem]
         c.invert = YesNo.allCases[invertPop.indexOfSelectedItem]
@@ -1046,7 +1048,7 @@ extension AppDelegate {
         colField.stringValue = "\(config.columnOffsetDots)"
         rowField.stringValue = "\(config.rowOffsetDots)"
         darkField.stringValue = "\(config.darkness)"
-        speedPop.selectItem(at: PrinterConfig.SPEED_REPORTED.firstIndex(of: config.speedIPS) ?? 0)
+        speedPop.selectItem(at: PrinterConfig.SPEEDS.firstIndex(of: config.speedIPS) ?? 0)
         reprintPop.selectItem(at: YesNo.allCases.firstIndex(of: config.reprintAfterError) ?? 0)
         mirrorPop.selectItem(at: YesNo.allCases.firstIndex(of: config.mirror) ?? 1)
         invertPop.selectItem(at: YesNo.allCases.firstIndex(of: config.invert) ?? 1)
